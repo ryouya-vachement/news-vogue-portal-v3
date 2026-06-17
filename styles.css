@@ -899,7 +899,9 @@ a.src-link:hover{ opacity: .55; }
   font-size: 11px; letter-spacing: .25em;
   color: var(--mid);
 }
-#resetPrefs{
+#resetPrefs,
+#resetProfile,
+#editProfile{
   font-family: var(--sans);
   font-size: 10px; letter-spacing: .25em;
   padding: 6px 12px;
@@ -908,9 +910,189 @@ a.src-link:hover{ opacity: .55; }
   color: var(--ink);
   transition: background .2s ease, color .2s ease;
 }
-#resetPrefs:hover{
+#resetPrefs:hover,
+#resetProfile:hover,
+#editProfile:hover{
   background: var(--ink);
   color: var(--paper);
+}
+#editProfile{
+  background: var(--ink);
+  color: var(--paper);
+}
+#editProfile:hover{
+  background: transparent;
+  color: var(--ink);
+}
+
+/* ============== UTILITY NAV — SIGN IN BUTTON + PROFILE DROPDOWN ============== */
+.profile-wrap{
+  display: inline-flex;
+  align-items: center;
+  margin-left: 8px;
+}
+.profile-btn{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sans);
+  font-size: 11px; letter-spacing: .22em; font-weight: 500;
+  padding: 6px 14px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  transition: background .2s ease, color .2s ease;
+}
+.signin-btn:hover{ background: var(--ink); color: var(--paper); }
+.profile-avatar{
+  width: 22px; height: 22px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--ink);
+}
+.profile-avatar.fallback{
+  display: inline-flex;
+  align-items: center; justify-content: center;
+  color: var(--paper);
+  font-family: var(--serif);
+  font-size: 12px; font-weight: 700;
+  letter-spacing: 0;
+}
+.profile-name{
+  max-width: 130px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: .12em;
+}
+.profile-menu{ position: relative; }
+.profile-drop{
+  position: absolute;
+  top: calc(100% + 6px); right: 0;
+  background: var(--paper);
+  border: 1px solid var(--ink);
+  min-width: 180px;
+  z-index: 110;
+  display: flex; flex-direction: column;
+}
+.profile-drop[hidden]{ display: none; }
+.profile-drop button{
+  text-align: left;
+  padding: 12px 16px;
+  font-size: 11px; letter-spacing: .22em;
+  border-bottom: 1px solid #e3dfd2;
+  background: transparent;
+  transition: background .15s ease;
+}
+.profile-drop button:last-child{ border-bottom: none; }
+.profile-drop button:hover{ background: var(--paper-2); }
+.gis-fallback{ margin-left: 8px; }
+
+/* ============== ONBOARDING MODAL ============== */
+.onb-modal{
+  position: fixed; inset: 0;
+  background: rgba(10,10,10,.88);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 200;
+  padding: 24px;
+  overflow-y: auto;
+}
+.onb-modal[hidden]{ display: none; }
+.onb-card{
+  position: relative;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  padding: 40px 44px;
+  max-width: 560px;
+  width: 100%;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.onb-close{
+  position: absolute; top: 16px; right: 18px;
+  font-family: var(--serif); font-size: 28px;
+  width: 32px; height: 32px;
+  line-height: 1;
+  background: transparent;
+  color: var(--ink);
+}
+.onb-title{
+  font-family: var(--serif);
+  font-weight: 900;
+  font-size: clamp(28px, 3.4vw, 40px);
+  line-height: 1.05;
+  margin: 16px 0 12px;
+  letter-spacing: -0.01em;
+}
+.onb-lede{
+  font-family: var(--serif-2);
+  font-size: 16px;
+  margin-bottom: 28px;
+}
+.onb-form{ display: flex; flex-direction: column; gap: 22px; }
+.onb-block{
+  border: none;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 0;
+}
+.onb-block legend{
+  font-size: 11px; letter-spacing: .25em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+.onb-hint{
+  font-weight: 400;
+  letter-spacing: .15em;
+  color: var(--mid);
+  font-size: 10px;
+}
+.onb-checks, .onb-radios{
+  display: flex; flex-wrap: wrap; gap: 10px 16px;
+}
+.onb-checks label, .onb-radios label{
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px; letter-spacing: .12em;
+  cursor: pointer;
+  padding: 6px 10px;
+  border: 1px solid #d9d6cb;
+  transition: background .15s ease, border-color .15s ease;
+}
+.onb-checks label:hover, .onb-radios label:hover{ border-color: var(--ink); }
+.onb-checks input, .onb-radios input{ accent-color: var(--ink); }
+.onb-form input[type="text"]{
+  width: 100%;
+  font-family: var(--sans);
+  font-size: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--ink);
+  background: transparent;
+  color: var(--ink);
+  outline: none;
+}
+.onb-actions{
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 8px;
+}
+.onb-skip, .onb-save{
+  font-family: var(--sans);
+  font-size: 11px; letter-spacing: .3em;
+  padding: 12px 22px;
+  border: 1px solid var(--ink);
+  transition: background .2s ease, color .2s ease;
+}
+.onb-skip{ background: transparent; color: var(--ink); }
+.onb-skip:hover{ background: var(--paper-2); }
+.onb-save{ background: var(--ink); color: var(--paper); }
+.onb-save:hover{ background: transparent; color: var(--ink); }
+
+@media (max-width: 720px){
+  .onb-card{ padding: 28px 22px; }
+  .profile-name{ display: none; }
+  .profile-btn{ padding: 6px 10px; }
 }
 
 /* FOR YOU label gets a small accent */

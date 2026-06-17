@@ -1,9 +1,19 @@
 /* =========================================================
-   OPINION — interactions & scroll animations
+   OPINION — interactions, live feeds, sign-in, personalization
    ========================================================= */
 
 (() => {
-  /* --- Today's date: update ticker / hero / section labels --- */
+  /* ============================================================
+     CONFIG — paste your Google OAuth Client ID here to enable
+     Google Sign-In. Get one at:
+       https://console.cloud.google.com/apis/credentials
+     (create an OAuth 2.0 Client ID of type "Web application",
+     and add your origin — e.g. http://localhost:8000 — to
+     "Authorized JavaScript origins")
+     ============================================================ */
+  const GOOGLE_CLIENT_ID = ''; // e.g. 'xxxxxxxxxxxx-yyyyyyyyyy.apps.googleusercontent.com'
+
+  /* ---------- Today's date: update ticker / hero ---------- */
   const updateTodayDate = () => {
     const now = new Date();
     const Y = now.getFullYear();
@@ -18,12 +28,12 @@
   };
   updateTodayDate();
 
-  /* --- Shared HTML escape --- */
+  /* ---------- Shared utilities ---------- */
   const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 
-  /* --- Outlet homepage map: source name → official site --- */
+  /* ---------- Outlet → homepage map ---------- */
   const SOURCE_URLS = [
     { match: ['朝日新聞', '朝日', 'Asahi'], url: 'https://www.asahi.com/' },
     { match: ['読売新聞', '読売', 'Yomiuri'], url: 'https://www.yomiuri.co.jp/' },
@@ -58,29 +68,90 @@
     return `<a class="src-link" href="${hit.url}" target="_blank" rel="noopener noreferrer">${escapeHtml(n)}</a>`;
   };
 
-  /* --- Local personalization (no sign-in) --- */
-  const PREFS_KEY = 'opinion_prefs_v1';
+  /* ============================================================
+     IDENTITY + PROFILE + LEARNING STATE
+     ============================================================ */
+  const USER_KEY    = 'opinion_user_v1';
+  const PROFILE_KEY = 'opinion_profile_v1';
+  const PREFS_KEY   = 'opinion_prefs_v1';
   const CATS = ['nation', 'world', 'business', 'tech', 'ent'];
+  const CAT_LABEL = { nation: 'POLITICS', world: 'WORLD', business: 'ECONOMY', tech: 'TECH', ent: 'CULTURE' };
 
+  const loadJson = (key) => {
+    try { return JSON.parse(localStorage.getItem(key)); } catch { return null; }
+  };
+  const saveJson = (key, v) => {
+    try { localStorage.setItem(key, JSON.stringify(v)); } catch {}
+  };
+  const removeKey = (key) => { try { localStorage.removeItem(key); } catch {} };
+
+  const loadUser    = () => loadJson(USER_KEY);
+  const saveUser    = (u) => saveJson(USER_KEY, u);
+  const clearUser   = () => removeKey(USER_KEY);
+  const loadProfile = () => loadJson(PROFILE_KEY);
+  const saveProfile = (p) => saveJson(PROFILE_KEY, p);
+  const clearProfile = () => removeKey(PROFILE_KEY);
+
+  const defaultPrefs = () => ({ total: 0, cats: {}, sources: {}, keywords: {}, updatedAt: null });
   const loadPrefs = () => {
-    try { return JSON.parse(localStorage.getItem(PREFS_KEY)) || {}; }
-    catch { return {}; }
+    const raw = loadJson(PREFS_KEY);
+    if (!raw) return defaultPrefs();
+    return {
+      total: raw.total || 0,
+      cats: raw.cats || {},
+      sources: raw.sources || {},
+      keywords: raw.keywords || {},
+      updatedAt: raw.updatedAt || null,
+    };
+  };
+  const capCounts = (obj, n) => {
+    const entries = Object.entries(obj || {});
+    if (entries.length <= n) return obj;
+    entries.sort((a, b) => b[1] - a[1]);
+    return Object.fromEntries(entries.slice(0, n));
   };
   const savePrefs = (p) => {
-    try { localStorage.setItem(PREFS_KEY, JSON.stringify(p)); } catch { /* ignore */ }
+    p.updatedAt = new Date().toISOString();
+    p.sources = capCounts(p.sources, 50);
+    p.keywords = capCounts(p.keywords, 80);
+    saveJson(PREFS_KEY, p);
   };
-  const recordClick = (cat) => {
+  const clearPrefs = () => removeKey(PREFS_KEY);
+
+  const STOPWORDS = new Set([
+    'the','a','an','of','to','in','on','at','and','or','for','is','are','be','was','were',
+    'this','that','it','as','by','with','about','from','one','will','can','has','have',
+    'について','による','として','という','です','ます','する','れる','られる','など','こと','もの',
+  ]);
+
+  const tokenize = (text) => {
+    if (!text) return [];
+    const cleaned = String(text).replace(
+      /[\s\.,、。!?！？「」『』【】\(\)\[\]<>:;~＝=\/\\\-—–·"'，　]/g,
+      ' '
+    );
+    return cleaned
+      .split(/\s+/)
+      .map(t => t.trim())
+      .filter(t => t.length >= 2 && t.length <= 15 && !STOPWORDS.has(t.toLowerCase()));
+  };
+
+  const recordClick = ({ cat, source, title }) => {
     if (!CATS.includes(cat)) return;
     const p = loadPrefs();
-    p[cat] = (p[cat] || 0) + 1;
+    p.cats[cat] = (p.cats[cat] || 0) + 1;
     p.total = (p.total || 0) + 1;
+    if (source) p.sources[source] = (p.sources[source] || 0) + 1;
+    tokenize(title).forEach(t => { p.keywords[t] = (p.keywords[t] || 0) + 1; });
     savePrefs(p);
   };
-  const getWeights = () => {
+
+  /* ---------- TODAY slot distribution (cat-weighted) ---------- */
+  const getCatWeights = () => {
     const p = loadPrefs();
-    const sum = CATS.reduce((s, c) => s + (p[c] || 0), 0);
+    const sum = CATS.reduce((s, c) => s + (p.cats[c] || 0), 0);
     if (!sum) return Object.fromEntries(CATS.map(c => [c, 1 / CATS.length]));
-    return Object.fromEntries(CATS.map(c => [c, ((p[c] || 0) + 1) / (sum + CATS.length)]));
+    return Object.fromEntries(CATS.map(c => [c, ((p.cats[c] || 0) + 1) / (sum + CATS.length)]));
   };
   const distributeSlots = (weights, totalSlots = 8) => {
     const raw = Object.fromEntries(CATS.map(c => [c, Math.max(1, Math.round(weights[c] * totalSlots))]));
@@ -97,7 +168,56 @@
     return raw;
   };
 
-  /* --- Feed config --- */
+  /* ---------- Personalization scoring ---------- */
+  const scoreItem = (item, ctx) => {
+    const { prefs, profile, catOfFeed } = ctx;
+    let s = 0;
+    // recency boost (24h window)
+    if (item.date) {
+      const hours = (Date.now() - item.date.getTime()) / 3600000;
+      s += Math.max(0, 24 - hours) * 0.02;
+    }
+    const tokens = tokenize(item.title);
+    // explicit profile signals
+    if (profile?.interests?.includes(CAT_LABEL[catOfFeed])) s += 1.0;
+    if (profile?.keywords?.length) {
+      const hit = profile.keywords.filter(k =>
+        tokens.some(t => t === k || t.includes(k) || k.includes(t))
+      ).length;
+      s += hit * 0.8;
+    }
+    // implicit click history
+    if (prefs?.cats?.[catOfFeed]) {
+      const sum = Object.values(prefs.cats).reduce((a, b) => a + b, 0) || 1;
+      s += (prefs.cats[catOfFeed] / sum) * 0.6;
+    }
+    if (prefs?.sources?.[item.source]) {
+      s += Math.log1p(prefs.sources[item.source]) * 0.2;
+    }
+    tokens.forEach(t => {
+      if (prefs?.keywords?.[t]) s += Math.log1p(prefs.keywords[t]) * 0.15;
+    });
+    return s;
+  };
+
+  const rankFeed = (feed, catKey) => {
+    if (!feed || !feed.length) return feed || [];
+    const prefs = loadPrefs();
+    const profile = loadProfile() || {};
+    const hasSignal =
+      (prefs.total > 0) ||
+      (profile.interests?.length > 0) ||
+      (profile.keywords?.length > 0);
+    if (!hasSignal) return feed;
+    return feed.slice().sort((a, b) =>
+      scoreItem(b, { prefs, profile, catOfFeed: catKey }) -
+      scoreItem(a, { prefs, profile, catOfFeed: catKey })
+    );
+  };
+
+  /* ============================================================
+     FEEDS
+     ============================================================ */
   const RSS_BASE = 'https://news.google.com/rss';
   const PROXY = 'https://api.rss2json.com/v1/api.json?rss_url=';
   const FEEDS = {
@@ -138,12 +258,16 @@
     return `${Math.floor(hours / 24)}d ago`;
   };
 
+  /* Link with data-cat (for click learning) and data-source (for source attribution) */
   const linkA = (it, cat) => {
-    const dc = cat ? ` data-cat="${escapeHtml(cat)}"` : '';
-    return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer"${dc}>${escapeHtml(it.title)}</a>`;
+    const dc  = cat ? ` data-cat="${escapeHtml(cat)}"` : '';
+    const dsrc = it.source ? ` data-source="${escapeHtml(it.source)}"` : '';
+    return `<a href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer"${dc}${dsrc}>${escapeHtml(it.title)}</a>`;
   };
 
-  /* ========== Renderers ========== */
+  /* ============================================================
+     RENDERERS
+     ============================================================ */
 
   const renderToday = (feeds) => {
     const list = document.getElementById('todayNewsList');
@@ -153,10 +277,16 @@
     if (!list) return;
 
     const prefs = loadPrefs();
-    const personalized = (prefs.total || 0) > 0;
-    const weights = getWeights();
+    const profile = loadProfile() || {};
+    const personalized =
+      (prefs.total > 0) ||
+      (profile.interests?.length > 0) ||
+      (profile.keywords?.length > 0);
+
+    const weights = getCatWeights();
     const slots = distributeSlots(weights, 8);
 
+    // Pick from each category's ranked feed
     let picked = [];
     CATS.forEach(c => {
       const n = slots[c] || 0;
@@ -166,14 +296,17 @@
     if (!picked.length && feeds.top && feeds.top.length) {
       picked = feeds.top.slice(0, 8).map(it => ({ ...it, _cat: 'nation' }));
     }
-    picked.sort((a, b) => {
-      if (a.date && b.date) return b.date.getTime() - a.date.getTime();
-      return 0;
-    });
+    // Final sort by score so the top of the list is the strongest match
+    picked.sort((a, b) =>
+      scoreItem(b, { prefs, profile, catOfFeed: b._cat }) -
+      scoreItem(a, { prefs, profile, catOfFeed: a._cat })
+    );
     picked = picked.slice(0, 8);
 
     if (label) label.textContent = personalized ? 'FOR YOU' : 'TODAY';
-    if (clicksLabel) clicksLabel.textContent = personalized ? `clicks: ${prefs.total}` : 'learning: idle';
+    if (clicksLabel) clicksLabel.textContent = personalized
+      ? `learning: ${prefs.total || 0} clicks`
+      : 'learning: idle';
 
     if (!picked.length) {
       list.innerHTML = '<li class="today-loading">Could not load today\'s news.</li>';
@@ -188,7 +321,7 @@
           <span class="t-num">${String(i + 1).padStart(2, '0')}</span>
           <div class="t-body">
             <span class="t-source">${sourceLink(it.source)}</span>
-            <a class="t-headline" href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer" data-cat="${escapeHtml(it._cat)}">${escapeHtml(it.title)}</a>
+            <a class="t-headline" href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer" data-cat="${escapeHtml(it._cat)}" data-source="${escapeHtml(it.source)}">${escapeHtml(it.title)}</a>
           </div>
           <span class="t-time">${t}</span>
         </li>
@@ -208,7 +341,6 @@
     if (h2) h2.innerHTML = linkA(top, 'nation');
     const lede = ts.querySelector('.lede');
     if (lede) lede.textContent = `${top.source} · ${timeAgo(top.date)}. National headlines from major outlets, side by side.`;
-
     const voices = ts.querySelector('.voices');
     if (!voices) return;
     const cls = ['positive', 'neutral', 'critical', 'global'];
@@ -228,7 +360,6 @@
   const renderThreeCol = (selector, items, baseNum, cat) => {
     const cols = document.querySelector(selector);
     if (!cols || !items.length) return;
-    // 3 topics × 5 outlets (1 main + 4 alternates) per col
     const groups = [];
     for (let i = 0; i < 3; i++) {
       const g = items.slice(i * 5, i * 5 + 5);
@@ -260,7 +391,6 @@
     if (!items.length) return;
     const ul = document.querySelector('.wf-list');
     if (ul) {
-      // 5 outlets covering culture/entertainment
       ul.innerHTML = items.slice(0, 5).map((it) => `
         <li><span>${sourceLink(it.source)}</span>${linkA(it, 'ent')}</li>
       `).join('');
@@ -274,7 +404,6 @@
   const renderWorld = (items) => {
     const list = document.querySelector('.world-list');
     if (!list || !items.length) return;
-    // 3 topics × 5 outlets (1 main + 4 subs) per world-item
     const groups = [];
     for (let i = 0; i < 3; i++) {
       const g = items.slice(i * 5, i * 5 + 5);
@@ -310,7 +439,6 @@
       if (tab) tab.textContent = label;
       const panel = document.querySelector(`.panel[data-panel="${key}"]`);
       if (!panel || !items || !items.length) return;
-      // 5 outlets per tab so each panel shows 4+ perspectives
       panel.innerHTML = items.slice(0, 5).map((it) => `
         <div class="panel-col">
           <span class="src">${sourceLink(it.source)}</span>
@@ -342,7 +470,6 @@
       const d = it.date
         ? `${String(it.date.getMonth() + 1).padStart(2, '0')}.${String(it.date.getDate()).padStart(2, '0')}`
         : '—';
-      // 4 alternate outlets from the same feed
       const seen = new Set([it.source]);
       const alts = [];
       for (const f of (it._feed || [])) {
@@ -353,7 +480,7 @@
         alts.push(f);
       }
       const altsHtml = alts.length ? `
-        <div class="t-alts">also covered by: ${alts.map(a => `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener noreferrer" data-cat="${escapeHtml(it._tag)}">${escapeHtml(a.source)}</a>`).join(' · ')}</div>
+        <div class="t-alts">also covered by: ${alts.map(a => `<a href="${escapeHtml(a.link)}" target="_blank" rel="noopener noreferrer" data-cat="${escapeHtml(it._tag)}" data-source="${escapeHtml(a.source)}">${escapeHtml(a.source)}</a>`).join(' · ')}</div>
       ` : '';
       return `
         <li>
@@ -367,24 +494,218 @@
     }).join('');
   };
 
-  /* --- Click delegation for category learning --- */
+  /* ============================================================
+     CLICK DELEGATION — record cat + source + title
+     ============================================================ */
   document.addEventListener('click', (e) => {
     const a = e.target.closest('a[data-cat]');
     if (!a) return;
     const cat = a.getAttribute('data-cat');
-    recordClick(cat);
+    const source = a.getAttribute('data-source') || '';
+    const title = a.textContent.trim();
+    recordClick({ cat, source, title });
   });
 
-  /* --- Reset preferences button --- */
-  const resetBtn = document.getElementById('resetPrefs');
-  if (resetBtn) {
-    resetBtn.addEventListener('click', () => {
-      try { localStorage.removeItem(PREFS_KEY); } catch {}
-      location.reload();
+  /* ============================================================
+     GOOGLE SIGN-IN (Google Identity Services)
+     ============================================================ */
+  let gisReady = false;
+
+  const decodeJwtPayload = (jwt) => {
+    try {
+      const b64 = jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+      const json = decodeURIComponent(
+        atob(b64).split('').map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+      );
+      return JSON.parse(json);
+    } catch { return null; }
+  };
+
+  const onCredential = (resp) => {
+    if (!resp?.credential) return;
+    const payload = decodeJwtPayload(resp.credential);
+    if (!payload) return;
+    saveUser({
+      sub: payload.sub,
+      name: payload.name,
+      email: payload.email,
+      picture: payload.picture,
     });
+    renderProfileUI();
+    // If profile not set yet, prompt onboarding
+    if (!loadProfile()?.savedAt) openOnboarding(true);
+  };
+
+  const initSignIn = () => {
+    if (!GOOGLE_CLIENT_ID) return;
+    const start = () => {
+      if (!window.google?.accounts?.id) {
+        setTimeout(start, 300);
+        return;
+      }
+      window.google.accounts.id.initialize({
+        client_id: GOOGLE_CLIENT_ID,
+        callback: onCredential,
+        auto_select: false,
+      });
+      gisReady = true;
+    };
+    start();
+  };
+
+  const triggerSignIn = () => {
+    if (!GOOGLE_CLIENT_ID) {
+      alert('Google Sign-In is not configured.\nSet GOOGLE_CLIENT_ID in script.js (see README).');
+      return;
+    }
+    if (!gisReady) {
+      setTimeout(triggerSignIn, 300);
+      return;
+    }
+    window.google.accounts.id.prompt((n) => {
+      if (n.isNotDisplayed() || n.isSkippedMoment()) {
+        // Render a fallback button container
+        const wrap = document.getElementById('profileWrap');
+        if (wrap && !wrap.querySelector('.gis-fallback')) {
+          const host = document.createElement('div');
+          host.className = 'gis-fallback';
+          wrap.appendChild(host);
+          window.google.accounts.id.renderButton(host, { type: 'standard', theme: 'outline', size: 'small' });
+        }
+      }
+    });
+  };
+
+  const triggerSignOut = () => {
+    if (window.google?.accounts?.id) window.google.accounts.id.disableAutoSelect();
+    clearUser();
+    renderProfileUI();
+  };
+
+  /* ============================================================
+     UI rendering: profile button + dropdown
+     ============================================================ */
+  const renderProfileUI = () => {
+    const wrap = document.getElementById('profileWrap');
+    if (!wrap) return;
+    const user = loadUser();
+    if (!user) {
+      wrap.innerHTML = `<button class="profile-btn signin-btn" id="signInBtn" type="button">SIGN IN</button>`;
+      document.getElementById('signInBtn')?.addEventListener('click', triggerSignIn);
+    } else {
+      const initials = (user.name || user.email || '?').slice(0, 1).toUpperCase();
+      wrap.innerHTML = `
+        <div class="profile-menu">
+          <button class="profile-btn" id="profileBtn" type="button" aria-haspopup="true">
+            ${user.picture
+              ? `<img class="profile-avatar" src="${escapeHtml(user.picture)}" alt="" referrerpolicy="no-referrer">`
+              : `<span class="profile-avatar fallback">${escapeHtml(initials)}</span>`}
+            <span class="profile-name">${escapeHtml(user.name || user.email || '')}</span>
+          </button>
+          <div class="profile-drop" id="profileDrop" hidden>
+            <button type="button" id="editProfileBtn">Edit profile</button>
+            <button type="button" id="signOutBtn">Sign out</button>
+          </div>
+        </div>
+      `;
+      const pb = document.getElementById('profileBtn');
+      const pd = document.getElementById('profileDrop');
+      pb?.addEventListener('click', (e) => { e.stopPropagation(); pd.hidden = !pd.hidden; });
+      document.addEventListener('click', () => { if (pd) pd.hidden = true; });
+      document.getElementById('signOutBtn')?.addEventListener('click', triggerSignOut);
+      document.getElementById('editProfileBtn')?.addEventListener('click', () => openOnboarding(true));
+    }
+    refreshProfileBadge();
+  };
+
+  const refreshProfileBadge = () => {
+    const badge = document.getElementById('todayProfile');
+    if (!badge) return;
+    const profile = loadProfile();
+    if (profile && (profile.interests?.length || profile.keywords?.length)) {
+      badge.textContent = `profile: ${profile.interests?.length || 0} cats / ${profile.keywords?.length || 0} kw`;
+    } else if (profile?.savedAt) {
+      badge.textContent = 'profile: skipped';
+    } else {
+      badge.textContent = 'profile: —';
+    }
+  };
+
+  /* ============================================================
+     ONBOARDING MODAL
+     ============================================================ */
+  const openOnboarding = (force = false) => {
+    const modal = document.getElementById('onbModal');
+    if (!modal) return;
+    const profile = loadProfile();
+    if (!force && profile?.savedAt) return;
+    const form = modal.querySelector('#onbForm');
+    form.querySelectorAll('input[name="interests"]').forEach(cb => {
+      cb.checked = (profile?.interests || []).includes(cb.value);
+    });
+    form.querySelector('input[name="keywords"]').value = (profile?.keywords || []).join(', ');
+    const setRadio = (name, value) => {
+      form.querySelectorAll(`input[name="${name}"]`).forEach(r => { r.checked = (r.value === (value || '')); });
+    };
+    setRadio('generation', profile?.generation);
+    setRadio('profession', profile?.profession);
+    modal.hidden = false;
+    document.body.style.overflow = 'hidden';
+  };
+  const closeOnboarding = () => {
+    const modal = document.getElementById('onbModal');
+    if (!modal) return;
+    modal.hidden = true;
+    document.body.style.overflow = '';
+  };
+  const onOnboardingSubmit = (e) => {
+    e.preventDefault();
+    const form = e.target;
+    const interests = Array.from(form.querySelectorAll('input[name="interests"]:checked')).map(cb => cb.value);
+    const keywords = form.querySelector('input[name="keywords"]').value
+      .split(/[,、，、]/).map(k => k.trim()).filter(Boolean);
+    const generation = form.querySelector('input[name="generation"]:checked')?.value || '';
+    const profession = form.querySelector('input[name="profession"]:checked')?.value || '';
+    saveProfile({ interests, keywords, generation, profession, savedAt: new Date().toISOString() });
+    closeOnboarding();
+    refreshProfileBadge();
+    location.reload();
+  };
+  const onOnboardingSkip = () => {
+    saveProfile({ interests: [], keywords: [], generation: '', profession: '', savedAt: new Date().toISOString(), skipped: true });
+    closeOnboarding();
+    refreshProfileBadge();
+  };
+
+  document.getElementById('onbForm')?.addEventListener('submit', onOnboardingSubmit);
+  document.getElementById('onbSkip')?.addEventListener('click', onOnboardingSkip);
+  document.getElementById('onbClose')?.addEventListener('click', closeOnboarding);
+
+  /* ============================================================
+     TODAY meta-bar: reset preferences / reset profile / edit profile
+     ============================================================ */
+  document.getElementById('resetPrefs')?.addEventListener('click', () => {
+    if (!confirm('Reset click learning?')) return;
+    clearPrefs();
+    location.reload();
+  });
+  document.getElementById('resetProfile')?.addEventListener('click', () => {
+    if (!confirm('Reset onboarding profile? You will be asked again.')) return;
+    clearProfile();
+    openOnboarding(true);
+  });
+  document.getElementById('editProfile')?.addEventListener('click', () => openOnboarding(true));
+
+  /* ============================================================
+     INIT + MASTER LOADER
+     ============================================================ */
+  initSignIn();
+  renderProfileUI();
+  refreshProfileBadge();
+  if (!loadProfile()?.savedAt) {
+    setTimeout(() => openOnboarding(false), 800);
   }
 
-  /* --- Master loader --- */
   (async () => {
     try {
       const [top, nation, world, business, tech, ent] = await Promise.all([
@@ -395,15 +716,22 @@
         fetchFeed(FEEDS.tech).catch(() => []),
         fetchFeed(FEEDS.ent).catch(() => []),
       ]);
-      const feeds = { top, nation, world, business, tech, ent };
+      const feeds = {
+        top:      rankFeed(top, 'nation'),
+        nation:   rankFeed(nation, 'nation'),
+        world:    rankFeed(world, 'world'),
+        business: rankFeed(business, 'business'),
+        tech:     rankFeed(tech, 'tech'),
+        ent:      rankFeed(ent, 'ent'),
+      };
       renderToday(feeds);
-      renderTopStory(nation);
-      renderThreeCol('#economy .three-col', business, 2, 'business');
-      renderThreeCol('#tech .three-col', tech, 6, 'tech');
-      renderCulture(ent);
-      renderWorld(world);
-      renderCompare({ nation, business, tech, world });
-      renderArchive({ top, nation, world, business, tech, ent });
+      renderTopStory(feeds.nation);
+      renderThreeCol('#economy .three-col', feeds.business, 2, 'business');
+      renderThreeCol('#tech .three-col', feeds.tech, 6, 'tech');
+      renderCulture(feeds.ent);
+      renderWorld(feeds.world);
+      renderCompare({ nation: feeds.nation, business: feeds.business, tech: feeds.tech, world: feeds.world });
+      renderArchive(feeds);
     } catch (err) {
       const list = document.getElementById('todayNewsList');
       if (list) list.innerHTML =
@@ -411,7 +739,9 @@
     }
   })();
 
-  /* --- Scroll-reveal via IntersectionObserver --- */
+  /* ============================================================
+     EXISTING SCROLL / NAV / TAB BEHAVIORS
+     ============================================================ */
   const revealEls = document.querySelectorAll('.reveal');
   const io = new IntersectionObserver((entries) => {
     entries.forEach((entry, i) => {
@@ -425,10 +755,8 @@
       }
     });
   }, { threshold: 0.12, rootMargin: '0px 0px -8% 0px' });
-
   revealEls.forEach((el) => io.observe(el));
 
-  /* --- Header shadow on scroll --- */
   const header = document.getElementById('siteHeader');
   let ticking = false;
   const onScroll = () => {
@@ -443,7 +771,6 @@
   };
   window.addEventListener('scroll', onScroll, { passive: true });
 
-  /* --- Mobile menu toggle --- */
   const menuBtn = document.getElementById('menuBtn');
   const mobileNav = document.getElementById('mobileNav');
   if (menuBtn && mobileNav) {
@@ -459,7 +786,6 @@
     );
   }
 
-  /* --- Compare tabs --- */
   const tabs = document.querySelectorAll('.tab');
   const panels = document.querySelectorAll('.panel');
   tabs.forEach((tab) => {
@@ -472,7 +798,6 @@
     });
   });
 
-  /* --- Subtle parallax on hero title lines --- */
   const heroLines = document.querySelectorAll('.hero-title .line');
   let parallaxTicking = false;
   window.addEventListener('scroll', () => {
@@ -488,7 +813,6 @@
     parallaxTicking = true;
   }, { passive: true });
 
-  /* --- Smooth-scroll for in-page anchors --- */
   document.querySelectorAll('a[href^="#"]').forEach((a) => {
     a.addEventListener('click', (e) => {
       const id = a.getAttribute('href');
@@ -502,7 +826,6 @@
     });
   });
 
-  /* --- Auto-rotate compare tabs when section in view --- */
   const compareSection = document.getElementById('compare');
   if (compareSection && tabs.length) {
     let rotateTimer = null;
