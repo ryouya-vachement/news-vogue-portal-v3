@@ -246,6 +246,35 @@
     return (data.items || []).map(parseItem);
   };
 
+  /* Day-seeded shuffle: deterministic per access date, varies day-to-day.
+     The top 3 items are preserved (so the day's biggest story stays on
+     top) and only items 4..N are rotated by today's seed. */
+  const daySeed = () => {
+    const d = new Date();
+    return d.getFullYear() * 10000 + (d.getMonth() + 1) * 100 + d.getDate();
+  };
+  const seededShuffle = (arr, seed) => {
+    let s = (seed || 1) >>> 0;
+    const rand = () => {
+      s = (s + 0x6D2B79F5) >>> 0;
+      let t = Math.imul(s ^ (s >>> 15), 1 | s);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+    const out = arr.slice();
+    for (let i = out.length - 1; i > 0; i--) {
+      const j = Math.floor(rand() * (i + 1));
+      [out[i], out[j]] = [out[j], out[i]];
+    }
+    return out;
+  };
+  const rotateByDay = (items, keepTop = 3) => {
+    if (!items || items.length <= keepTop) return items || [];
+    const head = items.slice(0, keepTop);
+    const tail = seededShuffle(items.slice(keepTop), daySeed());
+    return head.concat(tail);
+  };
+
   const timeAgo = (date) => {
     if (!date || isNaN(date.getTime())) return '';
     const diff = Date.now() - date.getTime();
@@ -340,21 +369,27 @@
     const h2 = ts.querySelector('h2');
     if (h2) h2.innerHTML = linkA(top, 'nation');
     const lede = ts.querySelector('.lede');
-    if (lede) lede.textContent = `${top.source} · ${timeAgo(top.date)}. National headlines from major outlets, side by side.`;
+    if (lede) lede.textContent = `Today's headlines, rotated for ${new Date().toISOString().slice(0,10)}.`;
     const voices = ts.querySelector('.voices');
     if (!voices) return;
-    const cls = ['positive', 'neutral', 'critical', 'global'];
-    const cards = items.slice(1, 11).map((it, i) => `
-      <article class="voice ${cls[i % 4]}">
-        <header>
-          <span class="badge">${String(i + 1).padStart(2, '0')}</span>
-          <span class="source">${sourceLink(it.source)}</span>
-        </header>
-        <h4>${linkA(it, 'nation')}</h4>
-        <p>posted ${escapeHtml(timeAgo(it.date))}</p>
-      </article>
-    `).join('');
-    voices.innerHTML = `<h3 class="voices-title">TEN HEADLINES, ONE MOMENT</h3>${cards}`;
+    // No.1 = headline list (10 distinct stories)
+    const lis = items.slice(0, 10).map((it, i) => {
+      const t = it.date
+        ? `${String(it.date.getHours()).padStart(2, '0')}:${String(it.date.getMinutes()).padStart(2, '0')}`
+        : '';
+      return `
+        <li class="ts-line">
+          <span class="ts-num">${String(i + 1).padStart(2, '0')}</span>
+          <span class="ts-source">${sourceLink(it.source)}</span>
+          <a class="ts-headline-link" href="${escapeHtml(it.link)}" target="_blank" rel="noopener noreferrer" data-cat="nation" data-source="${escapeHtml(it.source)}">${escapeHtml(it.title)}</a>
+          <span class="ts-time">${t}</span>
+        </li>
+      `;
+    }).join('');
+    voices.innerHTML = `
+      <h3 class="voices-title">TODAY'S HEADLINES</h3>
+      <ul class="ts-headline-list">${lis}</ul>
+    `;
   };
 
   const renderThreeCol = (selector, items, baseNum, cat) => {
@@ -716,13 +751,15 @@
         fetchFeed(FEEDS.tech).catch(() => []),
         fetchFeed(FEEDS.ent).catch(() => []),
       ]);
+      // Day-seeded rotation first (so order varies by access date),
+      // then personal scoring (which keeps day variance for equal-score items).
       const feeds = {
-        top:      rankFeed(top, 'nation'),
-        nation:   rankFeed(nation, 'nation'),
-        world:    rankFeed(world, 'world'),
-        business: rankFeed(business, 'business'),
-        tech:     rankFeed(tech, 'tech'),
-        ent:      rankFeed(ent, 'ent'),
+        top:      rankFeed(rotateByDay(top),      'nation'),
+        nation:   rankFeed(rotateByDay(nation),   'nation'),
+        world:    rankFeed(rotateByDay(world),    'world'),
+        business: rankFeed(rotateByDay(business), 'business'),
+        tech:     rankFeed(rotateByDay(tech),     'tech'),
+        ent:      rankFeed(rotateByDay(ent),      'ent'),
       };
       renderToday(feeds);
       renderTopStory(feeds.nation);
